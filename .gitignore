@@ -1,0 +1,16 @@
+node_modules/
+dist/
+artifacts/
+build/
+
+*.log
+.env
+.env.*
+!.env.example
+
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.user
+*.suo

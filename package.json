@@ -1,0 +1,94 @@
+{
+  "name": "deepseek-harness-desktop",
+  "version": "0.1.0",
+  "description": "Unofficial Windows desktop distribution of DeepSeek Harness with the Aemeath theme",
+  "author": "THao712",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/THao712/deepseek-harness-aemeath-desktop.git"
+  },
+  "homepage": "https://github.com/THao712/deepseek-harness-aemeath-desktop#readme",
+  "bugs": {
+    "url": "https://github.com/THao712/deepseek-harness-aemeath-desktop/issues"
+  },
+  "type": "module",
+  "main": "src/main.mjs",
+  "scripts": {
+    "icons": "node scripts/build-icons.mjs",
+    "patch:minimal-windows": "node scripts/patch-minimal-windows-pwsh.mjs",
+    "patch:native-picker": "node scripts/patch-native-directory-picker.mjs",
+    "postinstall": "npm run patch:native-picker && npm run patch:minimal-windows",
+    "start": "npm run patch:native-picker && npm run patch:minimal-windows && npm run icons && electron .",
+    "dist": "npm run patch:native-picker && npm run patch:minimal-windows && npm run icons && electron-builder --win nsis",
+    "dist:dir": "npm run patch:native-picker && npm run patch:minimal-windows && npm run icons && electron-builder --win dir",
+    "verify:minimal-windows": "node scripts/verify-minimal-windows-pwsh.mjs"
+  },
+  "dependencies": {
+    "@deepseek-ai/cordis-plugin-group": "1.0.1",
+    "@deepseek-ai/dsh": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-anonymous-user-id": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-atomic-write": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-bash-local": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-code-runtime": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-compaction": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-fs": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-invariants": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-output-retention": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-sandbox": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-scope": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-session-telemetry": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-session-title-llm": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-shell": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-spill": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-subagent-in-process-driver": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-subprocess": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-timeout": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-workflow": "0.1.0-rc.6"
+  },
+  "devDependencies": {
+    "electron": "43.4.0",
+    "electron-builder": "26.15.3",
+    "png-to-ico": "3.0.1",
+    "sharp": "0.35.3"
+  },
+  "build": {
+    "appId": "io.github.thao712.deepseek-harness-aemeath",
+    "productName": "DeepSeek Harness Aemeath",
+    "artifactName": "DeepSeek-Harness-Aemeath-Setup-${version}.${ext}",
+    "copyright": "Copyright (c) 2026 THao712",
+    "asar": false,
+    "npmRebuild": false,
+    "files": [
+      "src/**/*",
+      "assets/**/*",
+      "build/icon.png",
+      "package.json"
+    ],
+    "directories": {
+      "buildResources": "build",
+      "output": "dist"
+    },
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "build/icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowElevation": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": "always",
+      "createStartMenuShortcut": true,
+      "shortcutName": "DeepSeek Harness Aemeath",
+      "deleteAppDataOnUninstall": false
+    }
+  }
+}

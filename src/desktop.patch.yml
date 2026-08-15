@@ -1,0 +1,12 @@
+# The desktop shell runs locally and ships a patched native picker worker.
+# Pin both halves explicitly so Windows always uses the system folder dialog.
+- id: directory-picker
+  name: '@deepseek-ai/dsh-host-directory-picker-auto'
+  disabled: true
+
+- insert:
+    - id: directory-picker-native
+      name: '@deepseek-ai/dsh-host-directory-picker-native'
+
+    - id: ui-directory-picker-native
+      name: '@deepseek-ai/dsh-client-ui-directory-picker-native'
