@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, shell } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, shell } from "electron";
 import { spawn, spawnSync } from "node:child_process";
 import {
   createWriteStream,
@@ -12,12 +12,19 @@ import {
   writeFileSync,
 } from "node:fs";
 import net from "node:net";
+import { createInterface } from "node:readline";
 import { createRequire } from "node:module";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const require = createRequire(import.meta.url);
 const sourceDirectory = path.dirname(fileURLToPath(import.meta.url));
+const desktopManifest = JSON.parse(readFileSync(path.join(sourceDirectory, "..", "package.json"), "utf8"));
+const desktopVersion = desktopManifest.version;
+const updateRepository = "THao712/deepseek-harness-aemeath-desktop";
+function getUpdateDirectory() {
+  return path.join(path.dirname(realpathSync(app.getPath("userData"))), "updates");
+}
 const desktopPatchPath = path.join(sourceDirectory, "desktop.patch.yml");
 const loadingPage = path.join(sourceDirectory, "loading.html");
 const preloadPath = path.join(sourceDirectory, "preload.cjs");
@@ -63,6 +70,11 @@ let logStream;
 let runNumber = 0;
 let quitting = false;
 let ready = false;
+let latestUpdate;
+
+// Resolve migrated AppData before Chromium opens cookies, caches, or instance locks.
+const userDataPath = app.getPath("userData");
+if (existsSync(userDataPath)) app.setPath("userData", realpathSync(userDataPath));
 
 const hasLock = app.requestSingleInstanceLock();
 
@@ -100,7 +112,8 @@ function getDshEntry() {
 }
 
 function prepareDshHome(dshEntry) {
-  const dshHome = path.join(app.getPath("userData"), "dsh-home");
+  // Windows exclusive-create locks fail through some migrated AppData junctions.
+  const dshHome = path.join(realpathSync(app.getPath("userData")), "dsh-home");
   const profileDirectory = path.join(dshHome, "profiles", "web");
   const profileModules = path.join(profileDirectory, "node_modules");
   const bundledModules = path.resolve(path.dirname(dshEntry), "..", "..", "..");
@@ -134,12 +147,173 @@ function prepareDshHome(dshEntry) {
 }
 
 function appendLog(source, value) {
-  const text = value.toString();
+  const text = value.toString().replace(/([?&]token=)[^\s&]+/g, "$1[redacted]");
   logStream?.write(`[${new Date().toISOString()}] ${source}: ${text}`);
 }
 
 function recentLog() {
   return "See the application log for details.";
+}
+
+function compareVersions(left, right) {
+  const parse = (value) => {
+    const [numberPart, preRelease = ""] = String(value).replace(/^v/i, "").split("-", 2);
+    const numbers = numberPart.split(".").map((part) => Number.parseInt(part, 10) || 0);
+    return { numbers: [numbers[0] ?? 0, numbers[1] ?? 0, numbers[2] ?? 0], preRelease };
+  };
+  const a = parse(left);
+  const b = parse(right);
+  for (let index = 0; index < 3; index += 1) {
+    if (a.numbers[index] !== b.numbers[index]) return a.numbers[index] > b.numbers[index] ? 1 : -1;
+  }
+  if (!a.preRelease && b.preRelease) return 1;
+  if (a.preRelease && !b.preRelease) return -1;
+  if (a.preRelease === b.preRelease) return 0;
+  return a.preRelease > b.preRelease ? 1 : -1;
+}
+
+async function checkForUpdate() {
+  const response = await fetch(`https://api.github.com/repos/${updateRepository}/releases/latest`, {
+    headers: { accept: "application/vnd.github+json", "user-agent": "DeepSeek-Harness-Aemeath" },
+    signal: AbortSignal.timeout(12_000),
+  });
+  if (!response.ok) throw new Error(`GitHub update check failed (${response.status}).`);
+  const release = await response.json();
+  const installer = Array.isArray(release.assets)
+    ? release.assets.find((asset) => /^DeepSeek-Harness-Aemeath-Setup-.*\.exe$/i.test(asset.name))
+    : undefined;
+  latestUpdate = {
+    currentVersion: desktopVersion,
+    latestVersion: String(release.tag_name ?? "").replace(/^v/i, ""),
+    updateAvailable: compareVersions(release.tag_name, desktopVersion) > 0,
+    releaseUrl: release.html_url,
+    downloadUrl: installer?.browser_download_url ?? null,
+    installerName: installer?.name ?? null,
+  };
+  return latestUpdate;
+}
+
+async function downloadUpdate(downloadUrl) {
+  if (!latestUpdate || latestUpdate.downloadUrl !== downloadUrl) {
+    throw new Error("The update download link is no longer valid. Check for updates again.");
+  }
+  const parsed = new URL(downloadUrl);
+  if (parsed.hostname !== "github.com" && parsed.hostname !== "objects.githubusercontent.com") {
+    throw new Error("The update source is not a trusted GitHub download.");
+  }
+  const updateDirectory = getUpdateDirectory();
+  mkdirSync(updateDirectory, { recursive: true });
+  const filename = latestUpdate.installerName ?? `DeepSeek-Harness-Aemeath-Setup-${latestUpdate.latestVersion}.exe`;
+  const installerPath = path.join(updateDirectory, filename);
+  const response = await fetch(downloadUrl, {
+    headers: { accept: "application/octet-stream", "user-agent": "DeepSeek-Harness-Aemeath" },
+    redirect: "follow",
+    signal: AbortSignal.timeout(5 * 60_000),
+  });
+  if (!response.ok || !response.body) throw new Error(`Update download failed (${response.status}).`);
+  const file = createWriteStream(installerPath);
+  const writeFinished = new Promise((resolve, reject) => {
+    file.once("finish", resolve);
+    file.once("error", reject);
+  });
+  try {
+    for await (const chunk of response.body) file.write(chunk);
+  } finally {
+    file.end();
+  }
+  await writeFinished;
+  const installDirectory = path.resolve(app.getAppPath(), "..", "..");
+  const choice = await dialog.showMessageBox(mainWindow, {
+    type: "question",
+    buttons: ["立即安装", "稍后"],
+    defaultId: 0,
+    cancelId: 1,
+    title: "DeepSeek Harness 更新",
+    message: `更新 ${latestUpdate.latestVersion} 已下载完成。`,
+    detail: "点击“立即安装”后应用会退出，安装程序会覆盖当前版本并保留你的会话与设置。",
+  });
+  if (choice.response !== 0) return { installed: false, installerPath };
+  spawn(installerPath, ["/S", `/D=${installDirectory}`], {
+    detached: true,
+    stdio: "ignore",
+    windowsHide: false,
+  }).unref();
+  quitting = true;
+  app.quit();
+  return { installed: true, installerPath };
+}
+
+const updateControlCss = `
+  .dsh-desktop-update {
+    position: fixed; top: 14px; right: 18px; z-index: 2147483647;
+    width: 34px; height: 34px; padding: 0; border: 1px solid rgba(255, 211, 111, .42);
+    border-radius: 50%; color: #fff0bd; background: rgba(24, 14, 31, .84);
+    box-shadow: 0 0 16px rgba(255, 143, 200, .24); cursor: pointer;
+    font: 700 18px/32px "Segoe UI Symbol", sans-serif; text-align: center;
+    backdrop-filter: blur(8px); transition: transform 160ms ease, box-shadow 160ms ease;
+  }
+  .dsh-desktop-update:hover { transform: scale(1.08); box-shadow: 0 0 22px rgba(139, 220, 243, .5); }
+  .dsh-desktop-update[data-state="available"] { color: #bdf5ff; border-color: #8bdcf3; animation: dsh-update-pulse 1.8s ease-in-out infinite; }
+  .dsh-desktop-update[data-state="busy"] { color: #ffd36f; cursor: wait; }
+  @keyframes dsh-update-pulse { 50% { box-shadow: 0 0 26px rgba(139, 220, 243, .72); } }
+`;
+
+async function injectUpdateControl() {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  await mainWindow.webContents.insertCSS(updateControlCss);
+  await mainWindow.webContents.executeJavaScript(`(() => {
+    if (document.getElementById("dsh-desktop-update")) return;
+    const button = document.createElement("button");
+    button.id = "dsh-desktop-update";
+    button.className = "dsh-desktop-update";
+    button.type = "button";
+    button.textContent = "↻";
+    button.title = "检查 DeepSeek Harness 更新";
+    button.setAttribute("aria-label", button.title);
+    document.body.append(button);
+    const setState = (state, title, icon = "↻") => {
+      button.dataset.state = state;
+      button.textContent = icon;
+      button.title = title;
+      button.setAttribute("aria-label", title);
+    };
+    const check = async (autoInstall = false) => {
+      setState("busy", "正在检查更新", "⋯");
+      try {
+        const result = await window.desktopHarness.checkForUpdate();
+        if (result.updateAvailable && result.downloadUrl) {
+          if (autoInstall) {
+            setState("busy", "正在下载更新", "⋯");
+            await window.desktopHarness.installUpdate(result.downloadUrl);
+          } else {
+            setState("available", "发现新版本 " + result.latestVersion + "，点击安装", "↓");
+          }
+        } else if (result.updateAvailable) {
+          setState("available", "发现新版本，请打开发布页", "↓");
+        } else {
+          setState("ready", "当前已是最新版本", "✓");
+          setTimeout(() => setState("ready", "检查 DeepSeek Harness 更新", "↻"), 3500);
+        }
+      } catch (error) {
+        setState("error", "检查更新失败，点击重试", "!");
+      }
+    };
+    button.addEventListener("click", async () => {
+      if (button.dataset.state === "available") {
+        setState("busy", "正在下载更新", "⋯");
+        try {
+          const result = await window.desktopHarness.checkForUpdate();
+          if (!result.updateAvailable || !result.downloadUrl) return check();
+          await window.desktopHarness.installUpdate(result.downloadUrl);
+        } catch (error) {
+          setState("error", "下载更新失败，点击重试", "!");
+        }
+        return;
+      }
+      check(true);
+    });
+    setTimeout(() => check(false), 2500);
+  })()`);
 }
 
 async function showStartupError(error) {
@@ -169,7 +343,7 @@ async function showState(mode, detail = "") {
   });
 }
 
-async function waitForServer(url, child, timeoutMs = 180_000) {
+async function waitForServer(getUrl, child, timeoutMs = 180_000) {
   const deadline = Date.now() + timeoutMs;
 
   while (Date.now() < deadline) {
@@ -178,11 +352,20 @@ async function waitForServer(url, child, timeoutMs = 180_000) {
     }
 
     try {
+      const url = getUrl();
       const response = await fetch(url, {
         cache: "no-store",
+        redirect: "manual",
         signal: AbortSignal.timeout(1_500),
       });
-      if (response.ok) return;
+      // The browser, not this readiness probe, must retain the auth cookie.
+      const authenticatedRedirect =
+        response.status === 303 &&
+        response.headers.get("location") === "/" &&
+        response.headers.has("set-cookie") &&
+        new URL(url).searchParams.has("token");
+      await response.body?.cancel();
+      if (response.ok || authenticatedRedirect) return url;
     } catch {
       // The local server is still starting.
     }
@@ -217,6 +400,8 @@ async function launchHarness() {
 
   const port = await findOpenPort();
   const url = `http://127.0.0.1:${port}`;
+  harnessUrl = url;
+  let launchUrl = url;
   const dshEntry = getDshEntry();
   const dshHome = prepareDshHome(dshEntry);
 
@@ -230,6 +415,7 @@ async function launchHarness() {
       "web",
       "--patch",
       desktopPatchPath,
+      "--no-open",
       "--host",
       "127.0.0.1",
       "--port",
@@ -249,7 +435,18 @@ async function launchHarness() {
   );
 
   harnessProcess = child;
-  child.stdout.on("data", (chunk) => appendLog("stdout", chunk));
+  createInterface({ input: child.stdout }).on("line", (line) => {
+    appendLog("stdout", `${line}\n`);
+    if (!line.startsWith("dsh web: http")) return;
+    try {
+      const advertised = new URL(line.slice("dsh web: ".length).trim());
+      if (advertised.origin === url && advertised.pathname === "/") {
+        launchUrl = advertised.href;
+      }
+    } catch {
+      // Only accept complete local URLs printed by this child process.
+    }
+  });
   child.stderr.on("data", (chunk) => appendLog("stderr", chunk));
   child.on("error", (error) => appendLog("process-error", `${error.stack ?? error}\n`));
   child.on("exit", (code, signal) => {
@@ -262,11 +459,12 @@ async function launchHarness() {
   });
 
   try {
-    await waitForServer(url, child);
+    const readyUrl = await waitForServer(() => launchUrl, child);
     if (thisRun !== runNumber || child !== harnessProcess) return;
     ready = true;
-    harnessUrl = url;
-    await mainWindow.loadURL(url);
+    appendLog("desktop", `Harness ready at ${url}\n`);
+    await mainWindow.loadURL(readyUrl);
+    appendLog("desktop", "Harness UI loaded.\n");
     await captureTestFrame();
   } catch (error) {
     if (thisRun === runNumber) await showStartupError(error);
@@ -300,10 +498,15 @@ function createWindow() {
     mainWindow?.webContents.insertCSS(aemeathThemeCss).catch((error) => {
       appendLog("theme-error", `${error.stack ?? error}\n`);
     });
+    if (ready) {
+      injectUpdateControl().catch((error) => {
+        appendLog("update-control-error", `${error.stack ?? error}\n`);
+      });
+    }
   });
 
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-    if (harnessUrl && url.startsWith(harnessUrl)) {
+    if (harnessUrl && new URL(url).origin === harnessUrl) {
       mainWindow?.loadURL(url);
     } else {
       shell.openExternal(url).catch(() => {});
@@ -312,7 +515,7 @@ function createWindow() {
   });
 
   mainWindow.webContents.on("will-navigate", (event, url) => {
-    if (url.startsWith("file:") || (harnessUrl && url.startsWith(harnessUrl))) return;
+    if (url.startsWith("file:") || (harnessUrl && new URL(url).origin === harnessUrl)) return;
     event.preventDefault();
     shell.openExternal(url).catch(() => {});
   });
@@ -334,7 +537,19 @@ ipcMain.handle("desktop:show-log", async () => {
   if (logPath) shell.showItemInFolder(logPath);
 });
 
+ipcMain.handle("desktop:update-check", async () => checkForUpdate());
+
+ipcMain.handle("desktop:update-install", async (_event, downloadUrl) => {
+  try {
+    return await downloadUpdate(downloadUrl);
+  } catch (error) {
+    appendLog("update-error", `${error.stack ?? error}\n`);
+    throw error;
+  }
+});
+
 app.whenReady().then(async () => {
+  if (!hasLock || quitting) return;
   app.setAppUserModelId("io.github.thao712.deepseek-harness-aemeath");
 
   const logDirectory = path.join(app.getPath("userData"), "logs");

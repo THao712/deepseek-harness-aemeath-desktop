@@ -1,4 +1,5 @@
 :root {
+  --aemeath-choice-icon: url("__AEMEATH_ICON__");
   --aemeath-main-background: url("__AEMEATH_BACKDROP__");
   --color-eye-pupil: #f07830;
   --color-eye-core: #f6b347;
@@ -26,6 +27,33 @@
   --radius-hair-soft: 8px;
   --motion-hair-flow: cubic-bezier(0.22, 0.72, 0.24, 1);
   --motion-wing-bounce: cubic-bezier(0.2, 0.85, 0.35, 1.22);
+}
+
+[data-desktop-theme-options] {
+  display: grid !important;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+[data-desktop-theme-options] > button {
+  min-width: 0;
+  min-height: 88px;
+  padding: 14px 8px !important;
+  border-radius: 8px;
+  white-space: normal;
+}
+
+[data-aemeath-choice-icon] {
+  display: block;
+  width: 24px;
+  height: 24px;
+  background: var(--aemeath-choice-icon) center / contain no-repeat;
+}
+
+@media (max-width: 1000px) {
+  [data-desktop-theme-options] {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 html[data-aemeath-theme] {
@@ -168,6 +196,14 @@ body[data-aemeath-theme] [data-slot="sidebar"] > div {
 }
 
 body[data-aemeath-theme] [data-slot="conversation"] {
+  /* Upstream slots use display: contents; decorations need a real local box. */
+  display: flex !important;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  width: 100%;
+  height: 100%;
   position: relative;
   isolation: isolate;
   overflow: hidden;
@@ -188,6 +224,16 @@ body[data-aemeath-theme] [data-slot="conversation"]::after {
   background-image:
     linear-gradient(116deg, transparent 0 43%, rgb(255 210 228 / 5%) 43.2% 43.5%, transparent 43.7%),
     linear-gradient(123deg, transparent 0 67%, rgb(139 220 243 / 4%) 67.2% 67.5%, transparent 67.7%);
+}
+
+body[data-aemeath-theme] [data-slot="conversation"] > [class*="_root"] {
+  flex: 1;
+  min-height: 0;
+}
+
+body[data-aemeath-theme] [data-slot="conversation"]:has([class*="_headlineText"]) > div,
+body[data-aemeath-theme] [data-slot="conversation"] [class*="_scrollBody"]:has([class*="_headlineText"]) {
+  background: transparent !important;
 }
 
 body[data-aemeath-theme] [data-slot="conversation"]:has([class*="_headlineText"])::before {
@@ -518,7 +564,7 @@ body[data-aemeath-theme] [data-slot="conversation"] {
   background-size: cover;
 }
 
-body[data-aemeath-theme] [class*="_centerCol"]:has(> [data-slot="conversation"]) [class*="_scrollBody"] {
+body[data-aemeath-theme] [class*="_centerCol"]:has(> [data-slot="conversation"]) [class*="_scrollBody"]:not(:has([class*="_headlineText"])) {
   background-color: var(--color-night-base);
   background-image:
     radial-gradient(ellipse at 90% 70%, rgb(139 220 243 / 9%), transparent 32%),

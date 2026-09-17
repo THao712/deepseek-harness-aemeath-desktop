@@ -46,6 +46,22 @@ async function evaluate(expression) {
 
 await send("Runtime.enable");
 
+const continueResult = await evaluate(`
+  (() => {
+    const button = [...document.querySelectorAll('button')].find((candidate) =>
+      candidate.textContent?.trim() === '继续' &&
+      candidate.getClientRects().length > 0
+    );
+    if (!button) return { clicked: false };
+    button.click();
+    return { clicked: true };
+  })()
+`);
+
+if (continueResult.clicked) {
+  await new Promise((resolve) => setTimeout(resolve, 2_500));
+}
+
 const shouldTrigger = process.env.DSH_TRIGGER_PICKER !== "0";
 const clickResult = shouldTrigger
   ? await evaluate(`
@@ -66,6 +82,7 @@ await new Promise((resolve) => setTimeout(resolve, 1_000));
 
 const pageText = await evaluate("document.body.innerText");
 
+console.log("Disclosure dismissed:", JSON.stringify(continueResult));
 console.log("Native picker trigger:", JSON.stringify(clickResult));
 console.log(
   "Has picker error:",

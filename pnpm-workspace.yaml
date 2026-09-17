@@ -1,0 +1,16 @@
+overrides:
+  '@deepseek-ai/dsh-brand': 0.1.5-rc.2
+allowBuilds:
+  '@deepseek-ai/dsh-subprocess-local': true
+  '@google/genai': true
+  electron-winstaller: true
+  koffi: true
+  node-pty: true
+  protobufjs: true
+onlyBuiltDependencies:
+  - '@deepseek-ai/dsh-subprocess-local'
+  - '@google/genai'
+  - electron-winstaller
+  - koffi
+  - node-pty
+  - protobufjs

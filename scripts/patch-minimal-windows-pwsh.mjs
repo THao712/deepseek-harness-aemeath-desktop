@@ -3,13 +3,12 @@ import { createRequire } from "node:module";
 import path from "node:path";
 
 const require = createRequire(import.meta.url);
-const manifestPath = require.resolve("@deepseek-ai/dsh/package.json");
+const manifestPath = require.resolve("@deepseek-ai/dsh-agent-presets/package.json");
 const presetPath = process.argv[2]
   ? path.resolve(process.argv[2])
   : path.join(
       path.dirname(manifestPath),
-      "config",
-      "agent-presets",
+      "presets",
       "minimal",
       "agent.cordis.yml",
     );
@@ -25,10 +24,48 @@ const pwshRow = [
 ].join(eol);
 const legacyDescription =
   "description: 仅提供持久 bash 与 str_replace_editor 的双工具编码 Agent。";
+const legacyDescriptionV2 =
+  "description: 仅提供持久 shell 的单工具编码 Agent。";
 const platformDescription =
   "description: 提供系统 Shell（Windows 为 PowerShell，Linux/macOS 为持久 bash）与 str_replace_editor 的双工具编码 Agent。";
+const officialPlatformShellMarkers = [
+  "- id: terminal-pwsh",
+  "name: '@deepseek-ai/dsh-tool-pwsh-persistent'",
+  "shellDialect: pwsh",
+  "disabled: !!js process.platform === 'win32'",
+  "disabled: !!js process.platform !== 'win32'",
+];
 const hasPersistentShellGate = original.includes(persistentShellGate);
 const hasPwshRow = original.includes(pwshRow);
+
+// dsh 0.1.1-rc.2 ships the platform-specific persistent PowerShell stack.
+// Accept that upstream implementation instead of adding the legacy one-shot row.
+const hasOfficialPlatformShell = officialPlatformShellMarkers.every((marker) =>
+  original.includes(marker),
+);
+
+if (hasOfficialPlatformShell) {
+  let patchedMetadata = originalMetadata;
+  const upstreamDescription = originalMetadata.includes(legacyDescriptionV2);
+  if (!originalMetadata.includes(platformDescription)) {
+    if (!originalMetadata.includes(legacyDescription) && !upstreamDescription) {
+      throw new Error(`Unsupported DeepSeek minimal metadata: ${presetMetadataPath}`);
+    }
+    if (!upstreamDescription) patchedMetadata = originalMetadata.replace(legacyDescription, platformDescription);
+  }
+
+  if (patchedMetadata === originalMetadata) {
+    console.log(
+      "DeepSeek minimal Windows PowerShell support is already provided by upstream.",
+    );
+  } else {
+    writeFileSync(presetMetadataPath, patchedMetadata, "utf8");
+    console.log(
+      `Updated minimal mode metadata for upstream Windows PowerShell support: ${presetMetadataPath}`,
+    );
+  }
+  process.exit(0);
+}
 
 if (hasPersistentShellGate !== hasPwshRow) {
   throw new Error(`Incomplete minimal Windows patch: ${presetPath}`);
@@ -71,11 +108,11 @@ if (!patched.includes(persistentShellGate) || !patched.includes(pwshRow)) {
 
 let patchedMetadata = originalMetadata;
 if (!originalMetadata.includes(platformDescription)) {
-  if (!originalMetadata.includes(legacyDescription)) {
+  if (!originalMetadata.includes(legacyDescription) && !originalMetadata.includes(legacyDescriptionV2)) {
     throw new Error(`Unsupported DeepSeek minimal metadata: ${presetMetadataPath}`);
   }
   patchedMetadata = originalMetadata.replace(
-    legacyDescription,
+    originalMetadata.includes(legacyDescription) ? legacyDescription : legacyDescriptionV2,
     platformDescription,
   );
 }

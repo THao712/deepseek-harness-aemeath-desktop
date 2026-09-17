@@ -2,6 +2,8 @@ node_modules/
 dist/
 artifacts/
 build/
+dist.before-0.1.5/
+node_modules.before-0.1.5/
 
 *.log
 .env
